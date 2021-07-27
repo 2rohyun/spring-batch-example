@@ -1,5 +1,9 @@
-package com.dohyun.spring.batch.part4;
+package com.dohyun.spring.batch.part6;
 
+import com.dohyun.spring.batch.part4.LevelUpJobExecutionListener;
+import com.dohyun.spring.batch.part4.SaveUserTasklet;
+import com.dohyun.spring.batch.part4.User;
+import com.dohyun.spring.batch.part4.UserRepository;
 import com.dohyun.spring.batch.part5.JobParametersDecide;
 import com.dohyun.spring.batch.part5.OrderStatistics;
 import lombok.extern.slf4j.Slf4j;
@@ -9,6 +13,8 @@ import org.springframework.batch.core.configuration.annotation.JobBuilderFactory
 import org.springframework.batch.core.configuration.annotation.JobScope;
 import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
 import org.springframework.batch.core.launch.support.RunIdIncrementer;
+import org.springframework.batch.integration.async.AsyncItemProcessor;
+import org.springframework.batch.integration.async.AsyncItemWriter;
 import org.springframework.batch.item.ItemProcessor;
 import org.springframework.batch.item.ItemReader;
 import org.springframework.batch.item.ItemWriter;
@@ -25,6 +31,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.task.TaskExecutor;
 
 import javax.persistence.EntityManagerFactory;
 import javax.sql.DataSource;
@@ -33,25 +40,28 @@ import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.Future;
 
 @Configuration
 @Slf4j
-public class UserConfiguration {
+public class MultiThreadUserConfiguration {
 
-    private final String JOB_NAME = "userJob";
+    private final String JOB_NAME = "multiThreadUserJob";
     private final int CHUNK = 1000;
     private final JobBuilderFactory jobBuilderFactory;
     private final StepBuilderFactory stepBuilderFactory;
     private final UserRepository userRepository;
     private final EntityManagerFactory entityManagerFactory;
     private final DataSource dataSource;
+    private final TaskExecutor taskExecutor;
 
-    public UserConfiguration(JobBuilderFactory jobBuilderFactory, StepBuilderFactory stepBuilderFactory, UserRepository userRepository, EntityManagerFactory entityManagerFactory, DataSource dataSource) {
+    public MultiThreadUserConfiguration(JobBuilderFactory jobBuilderFactory, StepBuilderFactory stepBuilderFactory, UserRepository userRepository, EntityManagerFactory entityManagerFactory, DataSource dataSource, TaskExecutor taskExecutor) {
         this.jobBuilderFactory = jobBuilderFactory;
         this.stepBuilderFactory = stepBuilderFactory;
         this.userRepository = userRepository;
         this.entityManagerFactory = entityManagerFactory;
         this.dataSource = dataSource;
+        this.taskExecutor = taskExecutor;
     }
 
     @Bean(JOB_NAME)
@@ -148,19 +158,21 @@ public class UserConfiguration {
                 .reader(itemReader())
                 .processor(itemProcessor())
                 .writer(itemWriter())
+                .taskExecutor(this.taskExecutor)
+                .throttleLimit(8) // 몇 개의 쓰레드로 chunk 를 처리할지
                 .build();
     }
 
     private ItemWriter<? super User> itemWriter() {
         return users -> users.forEach(x -> {
-                x.levelUp();
-                userRepository.save(x);
-            });
+            x.levelUp();
+            userRepository.save(x);
+        });
     }
 
     private ItemProcessor<? super User, ? extends User> itemProcessor() {
         return user -> {
-            if (user.availableLevelUp()){
+            if (user.availableLevelUp()) {
                 return user;
             }
 
